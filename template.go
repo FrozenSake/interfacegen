@@ -17,6 +17,11 @@ type interfaceDef struct {
 	Methods []methodDef
 }
 
+type importDef struct {
+	Path string
+	Name string
+}
+
 const packageTemplate = `
 {{ if .Comment -}}
 // {{ .Comment -}}
@@ -27,7 +32,7 @@ package {{.PackageName}}
 {{ if .Imports -}}
 import (
 {{- range $_, $import := .Imports }}
-	{{ $import | printf "%q" }}
+	{{ $import.Name }} {{ $import.Path | printf "%q" }}
 {{- end }}
 )
 {{ end -}}
@@ -51,13 +56,13 @@ var (
 	tmpl = template.Must(template.New("interface").Parse(packageTemplate))
 )
 
-func (app *application) generatePackage(imports []string, interfaceDefs []interfaceDef) (code string, err error) {
+func (app *application) generatePackage(imports []importDef, interfaceDefs []interfaceDef) (code string, err error) {
 	buf := bytes.NewBuffer(nil)
 
 	err = tmpl.Execute(buf, struct {
 		Comment     string
 		PackageName string
-		Imports     []string
+		Imports     []importDef
 		Interfaces  []interfaceDef
 	}{
 		Comment:     app.Comment,
