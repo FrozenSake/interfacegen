@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -43,7 +42,7 @@ func main() {
 				app.TypeWhitelist = append(app.TypeWhitelist, wl)
 			}
 
-			err := app.Run(context.Background())
+			err := app.Run()
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -88,7 +87,7 @@ type application struct {
 }
 
 // Run takes the args after flag processing and performs the specified query.
-func (app *application) Run(ctx context.Context) error {
+func (app *application) Run() error {
 	// Load, parse, and type-check the packages named on the command line.
 	mode := (packages.NeedName | packages.NeedFiles | packages.NeedImports |
 		packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedModule)
@@ -108,7 +107,7 @@ func (app *application) Run(ctx context.Context) error {
 }
 
 func (app *application) parse(lpkgs []*packages.Package) error {
-	imports := map[string]bool{}
+	importDefs := make(map[importDef]struct{})
 
 	var interfaceDefs []interfaceDef
 
@@ -123,9 +122,37 @@ func (app *application) parse(lpkgs []*packages.Package) error {
 			target = lpkg.Types
 		}
 
+		for _, syntax := range lpkg.Syntax {
+			for _, importSpec := range syntax.Imports {
+				var name string
+				if importSpec.Name != nil {
+					name = importSpec.Name.Name
+				}
+
+				importDefs[importDef{
+					Path: strings.Trim(importSpec.Path.Value, `"`),
+					Name: name,
+				}] = struct{}{}
+			}
+		}
+
+		if target != lpkg.Types {
+			importDefs[importDef{
+				Path: lpkg.ID,
+			}] = struct{}{}
+		}
+
+		// qualifier determines how package-level types appear in the output interface signature
 		qualifier := func(other *types.Package) string {
 			if target == other {
 				return ""
+			}
+
+			// use the first import alias that matches, if any
+			for def := range importDefs {
+				if def.Path == other.Path() && def.Name != "" {
+					return def.Name
+				}
 			}
 
 			return other.Name()
@@ -213,22 +240,15 @@ func (app *application) parse(lpkgs []*packages.Package) error {
 			continue
 		}
 
-		for _, imp := range lpkg.Imports {
-			imports[imp.ID] = true
-		}
-
-		if target != lpkg.Types {
-			imports[lpkg.ID] = true
-		}
 	}
 
 	if len(interfaceDefs) == 0 {
 		return fmt.Errorf("package %s contained no matching interfaces", app.SrcPackage)
 	}
 
-	var distinctImports []string
-	for path := range imports {
-		distinctImports = append(distinctImports, path)
+	var distinctImports []importDef
+	for def := range importDefs {
+		distinctImports = append(distinctImports, def)
 	}
 
 	code, err := app.generatePackage(distinctImports, interfaceDefs)
